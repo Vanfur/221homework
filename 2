@@ -1,0 +1,12 @@
+import torch
+import torch.nn as nn
+class Baifan(nn.Module):
+    def __init__(self)->None:
+        super().__init__()
+    def forward(self,x):
+        output=x+1
+        return output
+baifan=Baifan()
+x=torch.tensor(2)
+output=baifan.forward(x)
+print(output)
