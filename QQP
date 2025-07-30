@@ -1,0 +1,119 @@
+config.py:
+# 训练参数
+BATCH_SIZE = 32
+NUM_EPOCHS = 3
+LEARNING_RATE = 2e-5
+MAX_SEQ_LENGTH = 128
+
+# 路径配置
+MODEL_NAME = "paraphrase-MiniLM-L6-v2"  # 轻量级SBERT模型
+TRAIN_DATA_PATH = "glue/QQP/train.tsv"
+DEV_DATA_PATH = "glue/QQP/dev.tsv"
+TEST_DATA_PATH = "glue/QQP/test.tsv"
+SAVED_MODEL_PATH = "qqp_sbert_model"
+
+data_loader.py:
+import pandas as pd
+from sklearn.model_selection import train_test_split
+
+
+def load_qqp_data(train_path, dev_path, sample_frac=1.0, random_state=42):
+    """加载QQP数据集"""
+    # 训练集
+    train_df = pd.read_csv(train_path, sep='\t')
+    train_df = train_df.rename(columns={'is_duplicate': 'label'})
+    train_df = train_df.dropna(subset=['question1', 'question2', 'label'])
+
+    # 验证集
+    dev_df = pd.read_csv(dev_path, sep='\t')
+    dev_df = dev_df.rename(columns={'is_duplicate': 'label'})
+    dev_df = dev_df.dropna(subset=['question1', 'question2', 'label'])
+
+    # 采样
+    if sample_frac < 1.0:
+        train_df = train_df.sample(frac=sample_frac, random_state=random_state)
+        dev_df = dev_df.sample(frac=sample_frac, random_state=random_state)
+
+    print(f"训练集: {len(train_df)}条 | 验证集: {len(dev_df)}条")
+    print("样例数据:\n", train_df[['question1', 'question2', 'label']].head(2))
+
+    return train_df, dev_df
+
+
+def load_qqp_test_data(test_path):
+    """加载测试集"""
+    test_df = pd.read_csv(test_path, sep='\t')
+    return test_df
+
+utils.py:
+import pandas as pd
+
+def print_samples(df, n=3):
+    """打印数据样例"""
+    print("\n数据样例:")
+    for i in range(min(n, len(df))):
+        row = df.iloc[i]
+        print(f"\n问题1: {row['question1']}")
+        print(f"问题2: {row['question2']}")
+        print(f"标签: {row.get('label', 'N/A')}")
+
+def evaluate_predictions(true_labels, pred_labels):
+    """评估预测结果"""
+    from sklearn.metrics import accuracy_score, f1_score
+    acc = accuracy_score(true_labels, pred_labels)
+    f1 = f1_score(true_labels, pred_labels)
+    print(f"准确率: {acc:.4f} | F1分数: {f1:.4f}")
+
+train.py:
+from sentence_transformers import SentenceTransformer, InputExample, losses
+from sentence_transformers.evaluation import BinaryClassificationEvaluator
+from torch.utils.data import DataLoader
+from data_loader import load_qqp_data
+from config import *
+import os
+
+
+def train():
+    # 1. 加载数据
+    train_df, dev_df = load_qqp_data(TRAIN_DATA_PATH, DEV_DATA_PATH, sample_frac=0.1)  # 使用10%数据快速测试
+
+    # 2. 准备SBERT输入格式
+    train_examples = [
+        InputExample(texts=[row['question1'], row['question2']], label=float(row['label']))
+        for _, row in train_df.iterrows()
+    ]
+
+    dev_examples = [
+        ([row['question1'], row['question2']], float(row['label']))
+        for _, row in dev_df.iterrows()
+    ]
+
+    # 3. 初始化模型
+    model = SentenceTransformer(MODEL_NAME)
+
+    # 4. 数据加载器
+    train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=BATCH_SIZE)
+    train_loss = losses.CosineSimilarityLoss(model)
+
+    # 5. 评估器
+    evaluator = BinaryClassificationEvaluator(
+        [x[0][0] for x in dev_examples],  # question1列表
+        [x[0][1] for x in dev_examples],  # question2列表
+        [x[1] for x in dev_examples]  # 标签列表
+    )
+
+    # 6. 训练模型
+    model.fit(
+        train_objectives=[(train_dataloader, train_loss)],
+        epochs=NUM_EPOCHS,
+        evaluator=evaluator,
+        evaluation_steps=100,
+        output_path=SAVED_MODEL_PATH,
+        show_progress_bar=True
+    )
+
+    print(f"训练完成，模型已保存到 {SAVED_MODEL_PATH}")
+
+
+if __name__ == "__main__":
+    train()
